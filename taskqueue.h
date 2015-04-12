@@ -9,6 +9,10 @@ using namespace std;
 
 const size_t MAX_TASK_NUMBER = 10000;
 
+/* 任务队列类：使用stl中queue实现，支持向队列添加和从队列获取任务
+ *		
+ *
+ */
 class TaskQueue {
 public:
 	TaskQueue();
@@ -28,7 +32,7 @@ public:
 	}
 	
 	size_t size();
-	
+
 	bool get_lock_flag() const{
 		return lock_flag;
 	}

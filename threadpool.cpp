@@ -4,7 +4,7 @@
 #include <iostream>
 #include <fstream>
 #include <unistd.h>
-
+#include <time.h>
 /* 单例模式
  * 
  */
@@ -33,16 +33,17 @@ ThreadPool::ThreadPool()
 	 
 	 num_of_idle(0),
 	 num_of_busy(0),
-	 idle_header(NULL),
+	 idle_head(NULL),
 	 idle_end(NULL),
-	 busy_header(NULL),
+	 busy_head(NULL),
 	 busy_end(NULL)
 {
+	time(&start_time);
 	pthread_mutex_init(&count_lock,NULL);//初始化互斥量
 	pthread_mutex_init(&list_lock,NULL); //初始化互斥量
 }
-/* 功能：	创建线程
- * 参数：	num表示即将创建的线程池内的线程数
+/* 功能：	初始化线程池，创建最少的线程数
+ * 参数：	
  * 返回值：	成功返回true,失败返回false
  */
 bool ThreadPool::init(){
@@ -58,30 +59,32 @@ bool ThreadPool::init(){
 	return true;
 }
 
+/* 功能：	创建线程
+ * 参数：	number，创建的线程数
+ * 返回值：	成功返回true,失败返回false
+ */
 bool ThreadPool::create_thread(size_t number){
+	
 	if(0 != pthread_mutex_lock(&count_lock))
 		return false;
-	if(num_total == MAX_THREAD_NUM){//线程数已满，返回
-		pthread_mutex_unlock(&count_lock);
-		return false;
-	}
 	Thread *tmp = NULL;
-	for(size_t i = 0;i < number;++i){
+	for(size_t i = 0;i < number && num_total < num_max_t ; ++i){
 		tmp = new Thread();
-		if(0 == pthread_create(&tmp->m_id,NULL,ThreadPool::thread_run,tmp)){
-			if(++num_total == MAX_THREAD_NUM)
-				break;
-		}
-		else{
+		/*线程默认状态是joinable,执行完不会自动释放资源，需在子线程中调用pthread_detach，把状态改为unjoinable，线程退出自动释放资源*/
+		if(0 != pthread_create(&tmp->m_id,NULL,ThreadPool::thread_run,tmp)){
 			delete tmp;
 			tmp = NULL;
 		}
+		++num_total;
 	}
 	pthread_mutex_unlock(&count_lock);
 	return true;
 }
 
-
+/* 功能：	往线程池中的任务队列中添加任务
+ * 参数：	TaskBase基类指针或引用
+ * 返回值：	成功返回true,失败返回false
+ */
 bool ThreadPool::add_task(TaskBase *task){
 	return task_queue.add_task(task);
 }
@@ -89,16 +92,22 @@ bool ThreadPool::add_task(TaskBase &task){
 	return task_queue.add_task(task);
 }
 
+/* 功能：	把一个线程添加到空闲线程队列
+ * 参数：	p_thread，线程对象的指针
+ * 返回值：	无
+ */
 void ThreadPool::add_to_idle(Thread *p_thread){
+	if(p_thread->m_state == isidle)
+		return;
 	if(0 != pthread_mutex_lock(&list_lock))
 		return;
 	/*如果是busy线程*/
 	if(p_thread->m_state == isbusy){
 		if(num_of_busy == 1)
-			busy_header = busy_end = NULL;
-		else if(busy_header == p_thread){  //在链表头
-			busy_header = busy_header->next;
-			busy_header->prev = NULL;
+			busy_head = busy_end = NULL;
+		else if(busy_head == p_thread){  //在链表头
+			busy_head = busy_head->next;
+			busy_head->prev = NULL;
 		}
 		else if(busy_end == p_thread){  //在链表尾
 			busy_end = busy_end->prev;
@@ -110,8 +119,8 @@ void ThreadPool::add_to_idle(Thread *p_thread){
 		num_of_busy--;
 	}
 	/*插入到idle链表*/
-	if(idle_header == NULL)
-		idle_header = idle_end = p_thread;
+	if(idle_head == NULL)
+		idle_head = idle_end = p_thread;
 	else{
 		idle_end->next = p_thread;
 		p_thread->prev = idle_end;
@@ -123,18 +132,22 @@ void ThreadPool::add_to_idle(Thread *p_thread){
 	pthread_mutex_unlock(&list_lock);
 }
 
-
-
+/* 功能：	把一个线程添加到忙碌线程队列
+ * 参数：	p_thread，线程对象的指针
+ * 返回值：	无
+ */
 void ThreadPool::add_to_busy(Thread *p_thread){  
+	if(p_thread->m_state == isbusy)
+		return;
 	if(0 != pthread_mutex_lock(&list_lock))
 		return;
 	/*如果是idle线程*/
 	if(p_thread->m_state == isidle){
 		if(num_of_idle == 1)
-			idle_header = idle_end = NULL;
-		else if(idle_header == p_thread){
-			idle_header = idle_header->next;
-			idle_header->prev = NULL;
+			idle_head = idle_end = NULL;
+		else if(idle_head == p_thread){
+			idle_head = idle_head->next;
+			idle_head->prev = NULL;
 		}
 		else if(idle_end == p_thread){
 			idle_end = idle_end->prev;
@@ -146,8 +159,8 @@ void ThreadPool::add_to_busy(Thread *p_thread){
 		num_of_idle--;
 	}
 	/*c插入到busy链表*/
-	if(busy_header == NULL)
-		busy_header = busy_end = p_thread;
+	if(busy_head == NULL)
+		busy_head = busy_end = p_thread;
 	else{
 		busy_end->next = p_thread;
 		p_thread->prev = busy_end;
@@ -159,8 +172,11 @@ void ThreadPool::add_to_busy(Thread *p_thread){
 	pthread_mutex_unlock(&list_lock);
 }
 
-
-void ThreadPool::remove_thread(Thread *p_thread){
+/* 功能：	删除某个线程
+ * 参数：	p_thread，线程对象的指针
+ * 返回值：	无
+ */
+void ThreadPool::delete_thread(Thread *p_thread){
 	pthread_mutex_lock(&count_lock);
 	num_total--;
 	pthread_mutex_unlock(&count_lock);
@@ -168,10 +184,10 @@ void ThreadPool::remove_thread(Thread *p_thread){
 	if(0 != pthread_mutex_lock(&list_lock))
 		return;
 	if(num_of_busy == 1)
-		busy_header = busy_end = NULL;
-	else if(busy_header == p_thread){  //在链表头
-		busy_header = busy_header->next;
-		busy_header->prev = NULL;
+		busy_head = busy_end = NULL;
+	else if(busy_head == p_thread){  //在链表头
+		busy_head = busy_head->next;
+		busy_head->prev = NULL;
 	}
 	else if(busy_end == p_thread){  //在链表尾
 		busy_end = busy_end->prev;
@@ -189,9 +205,9 @@ void ThreadPool::remove_thread(Thread *p_thread){
 
 
 
-/*
- * 设置decrease_flag标志，使得进入等待状态的线程退出
- * 
+/* 功能：	设置decrease_flag标志，使得进入等待状态的线程退出
+ * 参数：	无
+ * 返回值：成功返回true，失败或者线程总数不能减少了返回false
  */
 
 bool ThreadPool::decrease_thread(){
@@ -206,6 +222,10 @@ bool ThreadPool::decrease_thread(){
 	return true;
 }
 
+/* 功能：	供线程检查自己的退出条件是否满足
+ * 参数：	无
+ * 返回值：	成功返回true，失败返回false
+ */
 bool ThreadPool::check_decrease(){
 	bool res = true;
 	if(decrease_flag == false)
@@ -220,6 +240,10 @@ bool ThreadPool::check_decrease(){
 	return res;
 }
 
+/* 功能：	为线程创建管理者
+ * 参数：	无
+ * 返回值：	成功返回true，失败返回false
+ */
 bool ThreadPool::create_manager(){
 	manager_flag = true;
 	if(0 != pthread_create(&m_manager,NULL,ThreadPool::manager_run,this))
@@ -227,19 +251,25 @@ bool ThreadPool::create_manager(){
 	return true;
 }
 
-void ThreadPool::manage_increase(ofstream& os){
+/* 功能：	管理者增加线程数
+ * 参数：	文件输出流，保存log文件
+ * 返回值：	无
+ */
+void ThreadPool::manage_increase(ofstream &os){
 	/*如果任务太多，那么唤醒所有线程*/
+	/* */
 	if(task_queue.size() > overload_tasks){
 		task_queue.wake_up_all_worker();
-	}
-	sleep(10);
-	/*如果任务仍然太多，创建新的线程*/
-	if(task_queue.size() > overload_tasks){
 		os << "manager try to create new threads" <<endl;
 		create_thread(num_min_t);
 	}
+	
 }
 
+/* 功能：	管理者减少线程数
+ * 参数：	文件输出流，保存log文件
+ * 返回值：	无
+ */
 void ThreadPool::manage_decrease(ofstream& os){
 	if(task_queue.size() == 0 && num_total > num_min_t){
 		os << "manager try to cancel some threads"<<endl;
@@ -247,7 +277,10 @@ void ThreadPool::manage_decrease(ofstream& os){
 	}
 }
 
-
+/* 功能：	获取空闲线程的数目
+ * 参数：	无
+ * 返回值：	整数
+ */
 size_t ThreadPool::get_idle_number()
  {
      size_t ret = 0;
@@ -256,7 +289,11 @@ size_t ThreadPool::get_idle_number()
      pthread_mutex_unlock(&list_lock);
      return ret;
  }
-     
+
+/* 功能：	获取忙碌线程的数目
+ * 参数：	无
+ * 返回值：	整数
+ */
 size_t ThreadPool::get_busy_number()
 {
      size_t ret = 0;
@@ -267,6 +304,10 @@ size_t ThreadPool::get_busy_number()
      return ret;
 }
 
+/* 功能：	获取总线程的数目
+ * 参数：	无
+ * 返回值：	整数
+ */
 size_t ThreadPool::get_total_number()
 {
      size_t ret = 0;
@@ -277,17 +318,29 @@ size_t ThreadPool::get_total_number()
      return ret;
 }
 
-/*
- * 功能：每个线程的运行函数，调用任务的run方法
- * 
- * 
+/* 功能：	显示线程池状态
+ * 参数：	无
+ * 返回值：	无
+ */
+void ThreadPool::display_status(ostream &os){
+	os<< "running time :   "<< get_run_time() <<" seconds"<<endl;
+	pthread_mutex_lock(&list_lock);
+	os<< "idle number  :   "<< num_of_idle <<endl;
+	os<< "busy number  :   "<< num_of_busy <<endl;
+	pthread_mutex_unlock(&list_lock);
+	os<< "total number :   "<< get_total_number()<<endl;
+	os<< "queue size   :   "<< get_queue_size() <<endl;
+	os << endl;
+}
+ 
+/* 功能：	每个线程执行的函数，内部从任务队列中取任务执行
+ * 参数：	arg，线程本身的指针
+ * 返回值：	void * 无意义
  */
 void *ThreadPool::thread_run(void *arg){
 	
 	Thread * p_thread_self = static_cast<Thread *>(arg);
 	pthread_t self_id = pthread_self();
-	if(self_id == p_thread_self->m_id)
-		cout<<"it is the same"<<endl;
 	ThreadPool* p_thread_pool = ThreadPool::create_instance();
 	TaskQueue &	tq = p_thread_pool->task_queue;
 	
@@ -315,15 +368,18 @@ void *ThreadPool::thread_run(void *arg){
 		}
 	}
 	
-	/**/
+	/*当前线程退出时自动释放线程资源*/
 	pthread_detach(self_id);
-	p_thread_pool->remove_thread(p_thread_self);
+	p_thread_pool->delete_thread(p_thread_self);
 	log_output << "thread " <<self_id<<" exit..."<<endl;
 	log_output.close();
 	return static_cast<void *>(0);
 }
 
-
+/* 功能：	管理者执行的函数，负责管理线程状态和线程数目
+ * 参数：	arg，管理线程本身
+ * 返回值：	void * 无意义
+ */
 void *ThreadPool::manager_run(void *arg){
 	pthread_t self_id = pthread_self();
 	
@@ -346,12 +402,11 @@ void *ThreadPool::manager_run(void *arg){
 			break;
 		log_output<< "manager try to sleep now..."<<endl;
 		sleep(p_thread_pool->get_during_seconds());
-		log_output<< "idle number: "<< p_thread_pool->get_idle_number()<<endl;
-		log_output<< "busy number: "<< p_thread_pool->get_busy_number()<<endl;
-		log_output<< "total number:"<< p_thread_pool->get_total_number()<<endl;
-		log_output<< "queue size:  "<< p_thread_pool->get_queue_size() <<endl;
+		
+		p_thread_pool->display_status(log_output);
 		
 	}
+	/*当前线程退出时自动释放线程资源*/
 	pthread_detach(self_id);
 	p_thread_pool->clear_manager_id();
 	log_output << "manager thread exit..."<<endl;

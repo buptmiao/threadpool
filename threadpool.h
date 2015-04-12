@@ -5,6 +5,7 @@
 #include <fstream>
 #include <pthread.h>
 #include "taskqueue.h"
+#include "time.h"
 using namespace std;
 
 const size_t MAX_THREAD_NUM  	= 	100;
@@ -49,6 +50,8 @@ public:
 	void manage_increase(ofstream& os);
 	void manage_decrease(ofstream& os);
 	
+	void display_status(ostream &os);
+	
 	unsigned int get_idle_number();
 	unsigned int get_busy_number();
 	unsigned int get_total_number();
@@ -85,6 +88,10 @@ public:
 	size_t get_queue_size(){
 		return task_queue.size();
 	}
+	time_t get_run_time(){
+		time_t timer;
+		return difftime(time(&timer),start_time);
+	}
 private:
 	//把构造函数和复制构造函数设置为私有，禁止复制，并实现单例
 	ThreadPool();
@@ -93,7 +100,7 @@ private:
 	
 	void   				add_to_idle(Thread *);
 	void 				add_to_busy(Thread *);
-	void				remove_thread(Thread *);
+	void				delete_thread(Thread *);
 	static ThreadPool*	m_instance;				//保存唯一实例的指针
 	static void*		thread_run (void *arg); //线程运行函数
 	static void*		manager_run(void *arg); //管理者运行函数
@@ -109,14 +116,15 @@ private:
 	size_t 				period_of;  //
 	size_t				overload_tasks; //任务过载数量
 	
+	time_t				start_time; //  线程池启动时间
 	size_t 				num_total;	//  总的线程数
 	size_t				num_min_t;  //  最小线程数
 	size_t				num_max_t;	//  最大线程数
 	size_t				num_of_idle;//空闲线程数
 	size_t 				num_of_busy;//忙碌线程数
-	Thread*             idle_header; // idle双向链表头
+	Thread*             idle_head; // idle双向链表头
     Thread*             idle_end;
-    Thread*             busy_header; // busy双向链表头
+    Thread*             busy_head; // busy双向链表头
     Thread*             busy_end;
 
 	TaskQueue			task_queue; //	任务队列
