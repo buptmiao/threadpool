@@ -5,6 +5,7 @@
 #include <fstream>
 #include <unistd.h>
 #include <time.h>
+
 /* 单例模式
  * 
  */

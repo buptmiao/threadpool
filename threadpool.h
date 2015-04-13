@@ -9,9 +9,9 @@
 using namespace std;
 
 const size_t MAX_THREAD_NUM  	= 	100;
-const size_t TIME_PERIOD_SEC	=	120;
+const size_t TIME_PERIOD_SEC	=	1;
 const size_t OVERLOAD_TASKS		=	100;
-const size_t MIN_THREAD_NUM     =   3; 
+const size_t MIN_THREAD_NUM     =   5; 
 /*线程状态*/
 enum Threadstate{
 	isbusy = 0,
