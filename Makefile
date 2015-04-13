@@ -1,8 +1,8 @@
 # File Makefile
 
 files := $(shell ls)
-srcs  := $(filter %.cc, $(files))
-objs  := $(patsubst %.cc, %.o, $(srcs))
+srcs  := $(filter %.cpp, $(files))
+objs  := $(patsubst %.cpp, %.o, $(srcs))
 
 CXX := g++
 CXXFLAGS := -Wall -O
@@ -14,7 +14,7 @@ all : main
 main : $(objs)
 	$(CXX)  $^ -o $@ $(LDFLAGS)
 
-%.o : %.cc %.h
+%.o : %.cpp %.h
 
 .PHONY : log_clean clean print
 print :
