@@ -91,8 +91,13 @@ bool TaskQueue::do_add_task(TaskBase* task){
  * 参数：	无
  * 返回值：	返回任务指针
  */
+ void unlock_mutex(void *arg){ 
+ 	pthread_mutex_unlock((pthread_mutex_t *)arg);
+ }
 TaskBase* TaskQueue::get_task(){
 	TaskBase *task = NULL;
+	/*意外终止时释放锁*/
+	pthread_cleanup_push(unlock_mutex,(void *)&queue_lock);
 	if(0 != pthread_mutex_lock(&queue_lock))
 		return task;
 	while(queue_size == 0)
@@ -102,7 +107,7 @@ TaskBase* TaskQueue::get_task(){
 	m_task_queue.pop();
 	queue_size--;
 	pthread_mutex_unlock(&queue_lock);
-	
+	pthread_cleanup_pop(0);
 	/*唤醒阻塞在producer_cond上的所有线程*/
 	pthread_cond_signal(&producer_cond);
 	

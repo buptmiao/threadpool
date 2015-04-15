@@ -181,24 +181,42 @@ void ThreadPool::delete_thread(Thread *p_thread){
 	pthread_mutex_lock(&count_lock);
 	num_total--;
 	pthread_mutex_unlock(&count_lock);
-	
 	if(0 != pthread_mutex_lock(&list_lock))
 		return;
-	if(num_of_busy == 1)
-		busy_head = busy_end = NULL;
-	else if(busy_head == p_thread){  //在链表头
-		busy_head = busy_head->next;
-		busy_head->prev = NULL;
+    /*取消相应线程，线程运行到下一个取消点会自动退出*/				
+	if(0 != pthread_cancel(p_thread->m_id))//若取消失败 返回
+		return;
+	if(p_thread->m_state == isbusy){
+		if(num_of_busy == 1)
+			busy_head = busy_end = NULL;
+		else if(busy_head == p_thread){  //在链表头
+			busy_head = busy_head->next;
+			busy_head->prev = NULL;
+		}
+		else if(busy_end == p_thread){  //在链表尾
+			busy_end = busy_end->prev;
+			busy_end->next = NULL;
+		}else{							//
+			p_thread->prev->next = p_thread->next;
+			p_thread->next->prev = p_thread->prev;
+		}
+		num_of_busy--;	
+	}else if(p_thread->m_state == isidle){
+		if(num_of_idle == 1)
+			idle_head = idle_end = NULL;
+		else if(idle_head == p_thread){
+			idle_head = idle_head->next;
+			idle_head->prev = NULL;
+		}
+		else if(idle_end == p_thread){
+			idle_end = idle_end->prev;
+			idle_end->next = NULL;
+		}else{
+			p_thread->prev->next = p_thread->next;
+			p_thread->next->prev = p_thread->prev;
+		}
+		num_of_idle--;
 	}
-	else if(busy_end == p_thread){  //在链表尾
-		busy_end = busy_end->prev;
-		busy_end->next = NULL;
-	}else{							//
-		p_thread->prev->next = p_thread->next;
-		p_thread->next->prev = p_thread->prev;
-	}
-	num_of_busy--;	
-	
 	delete p_thread;
 	p_thread = NULL;
 	pthread_mutex_unlock(&list_lock);
@@ -206,20 +224,34 @@ void ThreadPool::delete_thread(Thread *p_thread){
 
 
 
-/* 功能：	设置decrease_flag标志，使得进入等待状态的线程退出
+/* 功能：	取消处于idle状态的多余线程
  * 参数：	无
- * 返回值：成功返回true，失败或者线程总数不能减少了返回false
+ * 返回值： 成功返回true，失败或者线程总数不能减少了返回false
  */
 
 bool ThreadPool::decrease_thread(){
 	
 	if(num_total <= num_min_t)
 		return false;
-		
-	decrease_flag = true;
+	pthread_mutex_lock(&count_lock);
+	pthread_mutex_lock(&list_lock);
+	
+	while(num_total > num_min_t && num_of_idle > 0){
+		if(0 != pthread_cancel(idle_head->m_id))//取消位于闲置列表头的线程,失败后退出循环
+			break;
+		Thread *tmp = idle_head;
+		delete idle_head;
+		idle_head = tmp->next;
+		idle_head->prev = NULL;
+		if(--num_of_idle == 0)
+			idle_head = idle_end = NULL;
+		--num_total;
+	}
+	pthread_mutex_unlock(&list_lock);
+	pthread_mutex_unlock(&count_lock);
 	//唤醒所有线程
-	if(!task_queue.wake_up_all_worker())
-		return false;
+	//if(!task_queue.wake_up_all_worker())
+	//	return false;
 	return true;
 }
 
@@ -229,8 +261,7 @@ bool ThreadPool::decrease_thread(){
  */
 bool ThreadPool::check_decrease(){
 	bool res = true;
-	if(decrease_flag == false)
-		return false;
+
 	if(0 != pthread_mutex_lock(&count_lock))
 		return false;
 	if(num_total > num_min_t)
@@ -338,6 +369,13 @@ void ThreadPool::display_status(ostream &os){
  * 参数：	arg，线程本身的指针
  * 返回值：	void * 无意义
  */
+
+void Close_logfile(void *arg){ //意外终止调用的函数
+	ofstream &os = *static_cast<ofstream *>(arg);
+	os << "thread exit" <<endl;
+	os.close();
+}
+
 void *ThreadPool::thread_run(void *arg){
 	
 	Thread * p_thread_self = static_cast<Thread *>(arg);
@@ -354,7 +392,12 @@ void *ThreadPool::thread_run(void *arg){
 		pthread_exit(static_cast<void *>(0));
 	log_output << "thread "<<self_id<<" start..."<<endl;
 	log_output << "pid " <<getpid()<<endl;
-	
+
+	/*当前线程退出时自动释放线程资源*/
+	pthread_detach(self_id);
+	/*设置清理函数，在前程取消时调用关闭文件函数*/
+	pthread_cleanup_push(Close_logfile,&log_output);
+
 	while(true){
 		p_thread_pool->add_to_idle(p_thread_self);
 		TaskBase *t = tq.get_task();
@@ -363,17 +406,10 @@ void *ThreadPool::thread_run(void *arg){
 			t->run(log_output);
 			delete t;
 			t = NULL;
-			
-			if(p_thread_pool->check_decrease())
-				break;
 		}
 	}
-	
-	/*当前线程退出时自动释放线程资源*/
-	pthread_detach(self_id);
-	p_thread_pool->delete_thread(p_thread_self);
-	log_output << "thread " <<self_id<<" exit..."<<endl;
-	log_output.close();
+	pthread_cleanup_pop(0);
+
 	return static_cast<void *>(0);
 }
 

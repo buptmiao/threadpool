@@ -110,7 +110,6 @@ private:
 	pthread_mutex_t 	list_lock;  //	列表锁
 	
 	bool 				initialed;
-	bool				decrease_flag;
 	bool				manager_flag;
 	
 	size_t 				period_of;  //
