@@ -24,8 +24,5 @@ int main(int argc, char **argv)
 		pool->add_task(tmp);
 	}
 	sleep(10);
-	tasktest tmp;
-	pool->add_task(tmp);
-	sleep(1);
 	return 0;
 }

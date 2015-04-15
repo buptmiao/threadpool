@@ -23,7 +23,6 @@ ThreadPool *ThreadPool::create_instance(){
  */
 ThreadPool::ThreadPool()
     :initialed(false),
-	 decrease_flag(false),
 	 manager_flag(false),
 	 period_of(TIME_PERIOD_SEC),
 	 overload_tasks(OVERLOAD_TASKS),
